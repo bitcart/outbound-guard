@@ -1,0 +1,45 @@
+repos:
+  - repo: builtin
+    hooks:
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+      - id: check-case-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: check-symlinks
+      - id: fix-byte-order-marker
+      - id: detect-private-key
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.10
+    hooks:
+      - id: uv-lock
+      - id: uv-audit
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.33.1
+    hooks:
+      - id: zizmor
+        args: [--no-progress, --offline, --persona=auditor]
+  - repo: local
+    hooks:
+      - id: deptry
+        name: deptry
+        entry: uv run --no-sync deptry .
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: oxfmt
+        name: oxfmt
+        types: [text]
+        language: node
+        require_serial: true
+        entry: oxfmt --no-error-on-unmatched-pattern
+        additional_dependencies: [oxfmt@0.75.0]

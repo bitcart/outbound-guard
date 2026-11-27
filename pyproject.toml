@@ -1,0 +1,120 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "outbound-guard"
+dynamic = ["version"]
+description = "Keep outbound connections to user-supplied destinations away from internal networks (SSRF protection)"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "MrNaif2018", email = "chuff184@gmail.com" }]
+requires-python = ">=3.12.4"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Framework :: aiohttp",
+    "Intended Audience :: Developers",
+    "Topic :: Internet",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Typing :: Typed",
+]
+keywords = [
+    "ssrf",
+    "security",
+    "outbound",
+    "egress",
+    "allowlist",
+    "aiohttp",
+    "smtp",
+    "ssh",
+    "asyncio",
+    "bitcart",
+]
+dependencies = []
+
+[project.optional-dependencies]
+aiohttp = ["aiohttp>=3.12"]
+smtp = ["aiosmtplib>=4"]
+ssh = ["paramiko>=3"]
+
+[project.urls]
+Homepage = "https://github.com/bitcart/outbound-guard"
+Source = "https://github.com/bitcart/outbound-guard"
+Changelog = "https://github.com/bitcart/outbound-guard/blob/master/CHANGELOG.md"
+
+[dependency-groups]
+lint = ["deptry", "mypy", "prek", "ruff", "types-paramiko"]
+test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-durations"]
+docs = ["zensical", "mkdocstrings-python"]
+dev = [
+    "outbound-guard[aiohttp,smtp,ssh]",
+    "rust-just>=1.46.0",
+    { include-group = "lint" },
+    { include-group = "test" },
+]
+all = [{ include-group = "dev" }, { include-group = "docs" }]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "outbound_guard/version.py" }]
+# dependency cooldowns for security
+exclude-newer = "1 week"
+
+[tool.hatch.build.targets.sdist]
+include = ["outbound_guard", "tests", "CHANGELOG.md"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["outbound_guard"]
+
+[tool.hatch.version]
+path = "outbound_guard/version.py"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 127
+
+[tool.ruff.lint]
+select = ["F", "E", "I", "UP", "YTT", "B", "T10", "C", "SIM", "RUF100", "RET", "A", "S", "ASYNC"]
+ignore = ["RET502", "RET503", "S104", "S507", "ASYNC109", "ASYNC110"]
+mccabe = { max-complexity = 12 }
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S"]
+
+[tool.mypy]
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_return_any = true
+no_implicit_optional = true
+strict_optional = true
+ignore_missing_imports = true
+exclude = ["tests"]
+
+[tool.pytest.ini_options]
+strict = true
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+junit_duration_report = "call"
+junit_suite_name = "outbound_guard_test_suite"
+addopts = ["--cov=outbound_guard", "--cov-report", "term-missing"]
+filterwarnings = [
+    "error::DeprecationWarning",
+    "error::PendingDeprecationWarning",
+    "error::pytest.PytestUnhandledThreadExceptionWarning",
+    "error::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.coverage.run]
+omit = ["outbound_guard/version.py"]
