@@ -114,7 +114,7 @@ async def allowed_hosts() -> list[str]:
 guard = OutboundGuard(allowed_hosts)
 ```
 
-Changes apply to the next connection, and with aiohttp also to reused keep-alive connections to internal addresses. If the function raises or returns an invalid entry, no internal destination is
+Changes apply to the next connection. If the function raises or returns an invalid entry, no internal destination is
 allowed and the error is logged.
 
 ## Logging

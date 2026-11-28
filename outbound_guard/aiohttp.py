@@ -27,8 +27,7 @@ MAX_RESPONSE_SIZE = 16 * 1024 * 1024
 class GuardedConnector(TCPConnector):
     """A TCPConnector that connects only to addresses the guard approves and refuses proxies.
 
-    Connections to addresses that are not public are checked again before each request, so allowlist changes apply to
-    reused keep-alive connections too. Other arguments are passed to TCPConnector.
+    Other arguments are passed to TCPConnector.
     """
 
     def __init__(self, guard: OutboundGuard, **kwargs: Any) -> None:
@@ -43,7 +42,7 @@ class GuardedConnector(TCPConnector):
         if req.proxy:
             raise self.guard.deny(req.url.raw_host or "", req.url.port, f"proxy {req.proxy.host}", "proxies are not supported")
         loop = asyncio.get_running_loop()
-        deadline = None if timeout.connect is None else loop.time() + timeout.connect
+        deadline = None if timeout.connect is None or timeout.connect <= 0 else loop.time() + timeout.connect
         connection = await super().connect(req, traces, timeout)
         try:
             async with asyncio.timeout_at(deadline):

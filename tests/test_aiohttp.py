@@ -198,6 +198,20 @@ async def test_checks_on_connect_are_limited_by_the_connect_timeout(start_server
     assert calls == 3
 
 
+@pytest.mark.parametrize("connect", [0, -1])
+async def test_disabled_connect_timeouts_do_not_limit_checks(connect: float, start_server: ServerFactory) -> None:
+    _, port = await start_server()
+
+    async def allowed_hosts() -> list[str]:
+        await asyncio.sleep(0.01)
+        return ["127.0.0.1"]
+
+    async with session(OutboundGuard(allowed_hosts), timeout=ClientTimeout(total=None, connect=connect)) as client:
+        for _ in range(2):
+            async with client.get(f"http://127.0.0.1:{port}/") as response:
+                assert response.status == 200
+
+
 async def test_every_redirect_hop_is_checked(start_server: ServerFactory) -> None:
     allowed, allowed_port = await start_server()
     internal, internal_port = await start_server()
