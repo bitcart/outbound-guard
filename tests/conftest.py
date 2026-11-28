@@ -50,6 +50,7 @@ def no_external_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 class FakeServer:
     def __init__(self) -> None:
         self.requests: list[str] = []
+        self.peers: set[Any] = set()
         self.redirect_to = ""
         self.app = web.Application()
         self.app.router.add_route("*", "/redirect", self.redirect)
@@ -61,6 +62,7 @@ class FakeServer:
 
     async def ok(self, request: web.Request) -> web.Response:
         self.requests.append(f"{request.method} {request.path}")
+        self.peers.add(request.transport.get_extra_info("peername") if request.transport else None)
         return web.json_response({"ok": True})
 
     async def redirect(self, request: web.Request) -> web.Response:

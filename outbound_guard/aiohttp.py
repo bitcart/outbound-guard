@@ -1,13 +1,25 @@
 import functools
+import weakref
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
-from aiohttp import ClientPayloadError, ClientRequest, ClientResponse, ClientSession, ClientTimeout, TCPConnector
+from aiohttp import (
+    ClientConnectorError,
+    ClientPayloadError,
+    ClientRequest,
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    TCPConnector,
+)
 from aiohttp.abc import ResolveResult
+from aiohttp.client_proto import ResponseHandler
 from aiohttp.connector import Connection
 from aiohttp.tracing import Trace
 
-from outbound_guard.guard import ConnectionCheck, OutboundGuard
+from outbound_guard.addresses import is_public_address
+from outbound_guard.destinations import is_ip_address
+from outbound_guard.guard import ConnectionCheck, OutboundDenied, OutboundGuard
 
 DEFAULT_TIMEOUT = ClientTimeout(total=15)
 MAX_RESPONSE_SIZE = 16 * 1024 * 1024
@@ -16,12 +28,14 @@ MAX_RESPONSE_SIZE = 16 * 1024 * 1024
 class GuardedConnector(TCPConnector):
     """A TCPConnector that connects only to addresses the guard approves and refuses proxies.
 
-    Other arguments are passed to TCPConnector.
+    Reused keep-alive connections to addresses that are not public are checked again before each request, so allowlist
+    changes apply to them too. Other arguments are passed to TCPConnector.
     """
 
     def __init__(self, guard: OutboundGuard, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.guard = guard
+        self.opened: weakref.WeakSet[ResponseHandler] = weakref.WeakSet()
 
     async def _resolve_host(self, host: str, port: int, traces: Sequence[Trace] | None = None) -> list[ResolveResult]:
         results = await super()._resolve_host(host, port, traces)
@@ -30,7 +44,26 @@ class GuardedConnector(TCPConnector):
     async def connect(self, req: ClientRequest, traces: list[Trace], timeout: ClientTimeout) -> Connection:
         if req.proxy:
             raise self.guard.deny(req.url.raw_host or "", req.url.port, f"proxy {req.proxy.host}", "proxies are not supported")
-        return await super().connect(req, traces, timeout)
+        connection = await super().connect(req, traces, timeout)
+        if connection.protocol not in self.opened:
+            self.opened.add(cast(ResponseHandler, connection.protocol))
+            return connection
+        try:
+            await self.check_reused(req, connection)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    async def check_reused(self, req: ClientRequest, connection: Connection) -> None:
+        peer = connection.transport.get_extra_info("peername") if connection.transport else None
+        address = str(peer[0]) if peer else ""
+        if is_ip_address(address) and is_public_address(address):
+            return
+        try:
+            await ConnectionCheck(self.guard, req.url.raw_host or "", req.url.port).approve(address)
+        except OutboundDenied as e:
+            raise ClientConnectorError(req.connection_key, e) from e
 
 
 @functools.lru_cache
