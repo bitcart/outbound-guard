@@ -2,7 +2,9 @@
 
 ## Latest changes
 
-aiohttp: allowlist changes now apply to reused keep-alive connections too. Before, a session that kept using a connection to an internal address could keep reaching it after the address was removed from the allowlist
+## 0.1.1
+
+Fix allowlist changes not applying to reused keep-alive connections in the aiohttp integration: a session that kept reusing a connection to an internal address could still reach it after the address was removed from the allowlist. Such connections are now checked again before each request
 
 ## 0.1.0
 
