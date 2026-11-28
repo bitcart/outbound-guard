@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import logging
 import socket
 from collections.abc import Callable
@@ -10,6 +11,7 @@ import aiohttp
 import pytest
 from aiohttp import ClientSession, ClientTimeout
 from aiohttp.abc import AbstractResolver, ResolveResult
+from aiohttp.connector import Connection
 
 from outbound_guard import OutboundDenied, OutboundGuard
 from outbound_guard.aiohttp import MAX_RESPONSE_SIZE, GuardedConnector, limited_response_class, session
@@ -127,7 +129,87 @@ async def test_allowlist_changes_apply_to_the_next_connection(start_server: Serv
                 assert response.status == 200
             allowed.clear()
     assert len(server.requests) == 2
-    assert provider.call_count == 4
+    assert provider.call_count == 6
+
+
+async def test_allowlist_changes_apply_to_reused_connections(start_server: ServerFactory) -> None:
+    server, port = await start_server()
+    allowed = [f"localhost:{port}"]
+    provider = AsyncMock(side_effect=lambda: allowed)
+    async with session(OutboundGuard(provider)) as client:
+        for path in ("/first", "/reused"):
+            async with client.get(f"http://localhost:{port}{path}") as response:
+                assert response.status == 200
+        assert provider.call_count == 3
+        allowed.clear()
+        with pytest.raises(aiohttp.ClientConnectorError) as e:
+            await client.get(f"http://localhost:{port}/removed")
+        assert isinstance(e.value.os_error, OutboundDenied) and e.value.errno == errno.EACCES
+        allowed.append(f"localhost:{port}")
+        async with client.get(f"http://localhost:{port}/again") as response:
+            assert response.status == 200
+    assert server.requests == ["GET /first", "GET /reused", "GET /again"]
+    assert len(server.peers) == 2
+
+
+async def test_connections_to_public_addresses_are_not_checked_again(
+    start_server: ServerFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, port = await start_server()
+    provider = AsyncMock(return_value=["127.0.0.1"])
+    monkeypatch.setattr("outbound_guard.aiohttp.is_public_address", lambda address: True)
+    async with session(OutboundGuard(provider)) as client:
+        for _ in range(3):
+            async with client.get(f"http://127.0.0.1:{port}/") as response:
+                assert response.status == 200
+    assert provider.call_count == 1
+
+
+async def test_reused_connections_without_a_peer_address_are_denied(
+    start_server: ServerFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, port = await start_server()
+    async with session(OutboundGuard(["127.0.0.1"])) as client:
+        async with client.get(f"http://127.0.0.1:{port}/") as response:
+            assert response.status == 200
+        monkeypatch.setattr(Connection, "transport", property(lambda self: None))
+        with pytest.raises(aiohttp.ClientConnectorError, match="not a canonical IP address"):
+            await client.get(f"http://127.0.0.1:{port}/")
+    assert server.requests == ["GET /"]
+
+
+async def test_checks_on_connect_are_limited_by_the_connect_timeout(start_server: ServerFactory) -> None:
+    server, port = await start_server()
+    calls = 0
+
+    async def allowed_hosts() -> list[str]:
+        nonlocal calls
+        calls += 1
+        if calls > 2:
+            await asyncio.Event().wait()
+        return ["127.0.0.1"]
+
+    async with session(OutboundGuard(allowed_hosts), timeout=ClientTimeout(total=None, connect=0.1)) as client:
+        async with client.get(f"http://127.0.0.1:{port}/") as response:
+            assert response.status == 200
+        with pytest.raises(aiohttp.ConnectionTimeoutError):
+            await client.get(f"http://127.0.0.1:{port}/")
+    assert server.requests == ["GET /"]
+    assert calls == 3
+
+
+@pytest.mark.parametrize("connect", [0, -1])
+async def test_disabled_connect_timeouts_do_not_limit_checks(connect: float, start_server: ServerFactory) -> None:
+    _, port = await start_server()
+
+    async def allowed_hosts() -> list[str]:
+        await asyncio.sleep(0.01)
+        return ["127.0.0.1"]
+
+    async with session(OutboundGuard(allowed_hosts), timeout=ClientTimeout(total=None, connect=connect)) as client:
+        for _ in range(2):
+            async with client.get(f"http://127.0.0.1:{port}/") as response:
+                assert response.status == 200
 
 
 async def test_every_redirect_hop_is_checked(start_server: ServerFactory) -> None:

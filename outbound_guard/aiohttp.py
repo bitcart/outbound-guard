@@ -1,13 +1,24 @@
+import asyncio
 import functools
 from collections.abc import Sequence
 from typing import Any
 
-from aiohttp import ClientPayloadError, ClientRequest, ClientResponse, ClientSession, ClientTimeout, TCPConnector
+from aiohttp import (
+    ClientConnectorError,
+    ClientPayloadError,
+    ClientRequest,
+    ClientResponse,
+    ClientSession,
+    ClientTimeout,
+    TCPConnector,
+)
 from aiohttp.abc import ResolveResult
 from aiohttp.connector import Connection
 from aiohttp.tracing import Trace
 
-from outbound_guard.guard import ConnectionCheck, OutboundGuard
+from outbound_guard.addresses import is_public_address
+from outbound_guard.destinations import is_ip_address
+from outbound_guard.guard import ConnectionCheck, OutboundDenied, OutboundGuard
 
 DEFAULT_TIMEOUT = ClientTimeout(total=15)
 MAX_RESPONSE_SIZE = 16 * 1024 * 1024
@@ -30,7 +41,26 @@ class GuardedConnector(TCPConnector):
     async def connect(self, req: ClientRequest, traces: list[Trace], timeout: ClientTimeout) -> Connection:
         if req.proxy:
             raise self.guard.deny(req.url.raw_host or "", req.url.port, f"proxy {req.proxy.host}", "proxies are not supported")
-        return await super().connect(req, traces, timeout)
+        loop = asyncio.get_running_loop()
+        deadline = None if timeout.connect is None or timeout.connect <= 0 else loop.time() + timeout.connect
+        connection = await super().connect(req, traces, timeout)
+        try:
+            async with asyncio.timeout_at(deadline):
+                await self.check_peer(req, connection)
+        except BaseException:
+            connection.close()
+            raise
+        return connection
+
+    async def check_peer(self, req: ClientRequest, connection: Connection) -> None:
+        peer = connection.transport.get_extra_info("peername") if connection.transport else None
+        address = str(peer[0]) if peer else ""
+        if is_ip_address(address) and is_public_address(address):
+            return
+        try:
+            await ConnectionCheck(self.guard, req.url.raw_host or "", req.url.port).approve(address)
+        except OutboundDenied as e:
+            raise ClientConnectorError(req.connection_key, e) from e
 
 
 @functools.lru_cache
